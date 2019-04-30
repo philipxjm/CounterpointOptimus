@@ -65,7 +65,7 @@ def scaled_dot_product_attention(Q, K, V,
 
         # key masking
         # if causality:
-        outputs = mask(outputs)
+        # outputs = mask(outputs)
 
         # softmax
         outputs = tf.nn.softmax(outputs)

@@ -7,9 +7,9 @@ KEEP_PROB = 0.5  # dropout rate
 # big
 BATCH_SIZE = 10  # size of batches
 HIDDEN_SIZE = 512  # size of encoder decoder hidden dimension
-FF_SIZE = 2048  # size of feed forward dimension
+FF_SIZE = 1024  # size of feed forward dimension
 NUM_HEADS = 8  # number of attention head
-NUM_BLOCKS = 8  # number of encoder decoder blocks
+NUM_BLOCKS = 6  # number of encoder decoder blocks
 VOCAB_SIZE = 49  # jsb4-55, jsb8-49
 MAX_LEN = 512
 

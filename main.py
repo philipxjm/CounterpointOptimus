@@ -1,7 +1,7 @@
 import model
 import tensorflow as tf
-from data import load_pieces, get_training_batch, build_vocab, \
-                 tokenize, get_test_batch
+from data import load_pieces, build_vocab, \
+                 tokenize, get_test_batch, get_pretraining_batch
 import numpy as np
 import sys
 from tqdm import tqdm
@@ -11,16 +11,31 @@ from midi_handler import noteStateMatrixToMidi
 np.set_printoptions(threshold=sys.maxsize)
 
 
-def train(model, pieces, epochs, save_name, start=0):
+def train(model,
+          pieces,
+          token2idx,
+          epochs,
+          save_name,
+          load_name=None,
+          mask_prob=0.15):
     sess = tf.Session()
-    sess.run(tf.global_variables_initializer())
-    saver = tf.train.Saver()
-    pbar = tqdm(range(start, start+epochs))
+    if load_name is not None:
+        saver = tf.train.Saver()
+        saver = tf.train.import_meta_graph(load_name + '.meta')
+        saver.restore(sess, load_name)
+    else:
+        sess.run(tf.global_variables_initializer())
+        saver = tf.train.Saver()
+    pbar = tqdm(range(0, epochs))
     for i in pbar:
-        x, y = get_training_batch(pieces)
+        x, y, mask = get_pretraining_batch(pieces,
+                                           token2idx,
+                                           hp.BATCH_SIZE,
+                                           mask_prob=0.30)
         l, _ = sess.run([model.loss, model.optimize],
                         feed_dict={model.inputs: x,
                                    model.labels: y,
+                                   model.mask: mask,
                                    model.dropout: hp.KEEP_PROB})
         pbar.set_description("epoch {}, loss={}".format(i, l))
         if i % 100 == 0:
@@ -33,17 +48,20 @@ def train(model, pieces, epochs, save_name, start=0):
         if i % 1000 == 0:
             total_correct = 0
             total_symbols = 0
-            for piece in pieces["test"]:
-                x = np.expand_dims(piece[:-1], axis=0)
-                y = np.expand_dims(piece[1:], axis=0)
+            for j in range(100):
+                x, y, mask = get_pretraining_batch(pieces,
+                                                   token2idx,
+                                                   hp.BATCH_SIZE,
+                                                   mask_prob=0.30,
+                                                   testing=True)
                 prediction = sess.run(model.logits,
                                       feed_dict={model.inputs: x,
                                                  model.dropout: 1.0})
                 activation = np.argmax(prediction, axis=2)
                 # print("act: ", activation)
                 # print("lab: ", y)
-                total_correct += np.sum(y == activation)
-                total_symbols += activation.shape[1]
+                total_correct += np.sum(np.multiply(y == activation, mask))
+                total_symbols += np.sum(mask)
             print(total_correct / total_symbols)
     final_loss = sess.run([model.loss],
                           feed_dict={model.inputs: x,
@@ -58,17 +76,23 @@ def test(model, pieces, save_name):
     saver.restore(sess, save_name)
     total_correct = 0
     total_symbols = 0
-    for piece in pieces["test"]:
-        x = np.expand_dims(piece[:-1], axis=0)
-        y = np.expand_dims(piece[1:], axis=0)
+    for j in range(100):
+        x, y, mask = get_pretraining_batch(pieces,
+                                           token2idx,
+                                           hp.BATCH_SIZE,
+                                           mask_prob=.75,
+                                           testing=True)
+        # print(x[0])
+        # print(y[0])
+        # print(mask[0])
         prediction = sess.run(model.logits,
                               feed_dict={model.inputs: x,
                                          model.dropout: 1.0})
         activation = np.argmax(prediction, axis=2)
-        print("act: ", activation)
-        print("lab: ", y)
-        total_correct += np.sum(y == activation)
-        total_symbols += activation.shape[1]
+        # print(activation[0])
+        # print("lab: ", y)
+        total_correct += np.sum(np.multiply(y == activation, mask))
+        total_symbols += np.sum(mask)
     print(total_correct / total_symbols)
 
 
@@ -140,6 +164,7 @@ def generate(model,
 if __name__ == '__main__':
     inputs = tf.placeholder(tf.int32, shape=[None, hp.MAX_LEN])
     labels = tf.placeholder(tf.int32, shape=[None, hp.MAX_LEN])
+    mask = tf.placeholder(tf.float32, shape=[None, hp.MAX_LEN])
     dropout = tf.placeholder(tf.float32, shape=())
 
     pieces, seqlens = load_pieces("data/roll/jsb8.pkl")
@@ -147,9 +172,15 @@ if __name__ == '__main__':
     pieces = tokenize(pieces, token2idx, idx2token)
     m = model.Model(inputs=inputs,
                     labels=labels,
+                    mask=mask,
                     dropout=dropout,
                     token2idx=token2idx,
                     idx2token=idx2token)
-    # train(m, pieces, 500000, "model/jsb8/model_")
-    # test(m, pieces, "model/jsb8/model")
-    generate(m, pieces, "model/jsb8/model", token2idx, idx2token)
+    # train(model=m,
+    #       pieces=pieces,
+    #       token2idx=token2idx,
+    #       epochs=500000,
+    #       save_name="model/jsb8_30/model_",
+    #       load_name="model/jsb8/model_0.0013442965-210500")
+    test(m, pieces, "model/jsb8/model_0.0013442965-210500")
+    # generate(m, pieces, "model/jsb8/model", token2idx, idx2token)

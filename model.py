@@ -5,9 +5,10 @@ from modules import ff, positional_encoding, \
 
 
 class Model:
-    def __init__(self, inputs, labels, dropout, token2idx, idx2token):
+    def __init__(self, inputs, labels, mask, dropout, token2idx, idx2token):
         self.inputs = inputs
         self.labels = labels
+        self.mask = mask
         self.dropout = dropout
         self.token2idx = token2idx
         self.idx2token = idx2token
@@ -51,11 +52,9 @@ class Model:
         return logits
 
     def loss_function(self, logits, inputs, labels):
-        nonpadding = tf.to_float(tf.not_equal(labels, self.token2idx[hp.PAD]))
-        # nonmasking = tf.to_float(tf.not_equal(inputs, self.token2idx[hp.MASK]))
         ce = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits,
                                                             labels=labels)
-        loss = tf.reduce_sum(ce*nonpadding) / (tf.reduce_sum(nonpadding)+1e-7)
+        loss = tf.reduce_sum(ce*self.mask) / (tf.reduce_sum(self.mask)+1e-7)
         return loss
 
     def train(self, inputs, labels):

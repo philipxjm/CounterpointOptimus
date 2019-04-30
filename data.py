@@ -1,6 +1,7 @@
 import numpy as np
 import pickle
 import hyper_params as hp
+import random
 
 
 def load_pieces(dirpath):
@@ -121,9 +122,9 @@ def build_vocab(pieces):
     idx2token = {i+1: w for i, w in enumerate(vocabs)}
     token2idx = {w: i+1 for i, w in enumerate(vocabs)}
     idx2token[0] = hp.PAD
-    # idx2token[1] = hp.MASK
+    idx2token[1] = hp.MASK
     token2idx[hp.PAD] = 0
-    # token2idx[hp.MASK] = 1
+    token2idx[hp.MASK] = 1
 
     return token2idx, idx2token
 
@@ -192,13 +193,39 @@ def get_test_batch(pieces, batch_size=hp.BATCH_SIZE):
     return x.astype(int), y.astype(int)
 
 
-# def get_pretraining_batch(pieces,
-#                           seqlens,
-#                           batch_size=hp.BATCH_SIZE,
-#                           mask_prob=0.15):
-#     batch_indices = np.random.choice(len(pieces["test"]),
-#                                      size=batch_size,
-#                                      replace=True)
+def get_pretraining_batch(pieces,
+                          token2idx,
+                          batch_size=hp.BATCH_SIZE,
+                          mask_prob=0.15,
+                          testing=False):
+    if testing:
+        tr_te = "test"
+    else:
+        tr_te = "train"
+    batch_indices = np.random.choice(len(pieces[tr_te]),
+                                     size=batch_size,
+                                     replace=True)
+    x = pieces[tr_te][batch_indices][:, :-1]
+    y = np.copy(x)
+    mask = np.zeros_like(x)
+
+    for i in range(len(x)):
+        mask_indices = np.random.choice(len(x[i]),
+                                        size=int(len(x[i]) * mask_prob),
+                                        replace=False)
+        print(len(mask_indices))
+        for j in mask_indices:
+            r = random.random()
+            mask[i][j] = 1
+            if r <= .1:
+                continue
+            elif r <= .2:
+                random_token = random.randint(0, len(token2idx) - 1)
+                x[i][j] = random_token
+            else:
+                x[i][j] = token2idx[hp.MASK]
+
+    return x.astype(int), y.astype(int), mask.astype(float)
 
 
 # pieces, seqlens = load_pieces("data/roll/jsb8.pkl")
