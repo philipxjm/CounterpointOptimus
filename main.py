@@ -1,7 +1,7 @@
 import model
 import tensorflow as tf
 from data import load_pieces, build_vocab, \
-                 tokenize, get_test_batch, get_pretraining_batch
+                 tokenize, get_finetuning_batch, get_pretraining_batch
 import numpy as np
 import sys
 from tqdm import tqdm
@@ -17,7 +17,8 @@ def train(model,
           epochs,
           save_name,
           load_name=None,
-          mask_prob=0.15):
+          mask_prob=0.15,
+          finetuning=False):
     sess = tf.Session()
     if load_name is not None:
         saver = tf.train.Saver()
@@ -28,10 +29,15 @@ def train(model,
         saver = tf.train.Saver()
     pbar = tqdm(range(0, epochs))
     for i in pbar:
-        x, y, mask = get_pretraining_batch(pieces,
-                                           token2idx,
-                                           hp.BATCH_SIZE,
-                                           mask_prob=0.30)
+        if finetuning:
+            x, y, mask = get_finetuning_batch(pieces,
+                                              token2idx,
+                                              hp.BATCH_SIZE)
+        else:
+            x, y, mask = get_pretraining_batch(pieces,
+                                               token2idx,
+                                               hp.BATCH_SIZE,
+                                               mask_prob=mask_prob)
         l, _ = sess.run([model.loss, model.optimize],
                         feed_dict={model.inputs: x,
                                    model.labels: y,
@@ -49,11 +55,17 @@ def train(model,
             total_correct = 0
             total_symbols = 0
             for j in range(100):
-                x, y, mask = get_pretraining_batch(pieces,
-                                                   token2idx,
-                                                   hp.BATCH_SIZE,
-                                                   mask_prob=0.30,
-                                                   testing=True)
+                if finetuning:
+                    x, y, mask = get_finetuning_batch(pieces,
+                                                      token2idx,
+                                                      hp.BATCH_SIZE,
+                                                      testing=True)
+                else:
+                    x, y, mask = get_pretraining_batch(pieces,
+                                                       token2idx,
+                                                       hp.BATCH_SIZE,
+                                                       mask_prob=mask_prob,
+                                                       testing=True)
                 prediction = sess.run(model.logits,
                                       feed_dict={model.inputs: x,
                                                  model.dropout: 1.0})
@@ -69,7 +81,7 @@ def train(model,
     saver.save(sess, save_name + str(final_loss[0]))
 
 
-def test(model, pieces, save_name):
+def test(model, pieces, save_name, finetuning=True):
     sess = tf.Session()
     saver = tf.train.Saver()
     saver = tf.train.import_meta_graph(save_name + '.meta')
@@ -77,11 +89,17 @@ def test(model, pieces, save_name):
     total_correct = 0
     total_symbols = 0
     for j in range(100):
-        x, y, mask = get_pretraining_batch(pieces,
-                                           token2idx,
-                                           hp.BATCH_SIZE,
-                                           mask_prob=.75,
-                                           testing=True)
+        if finetuning:
+            x, y, mask = get_finetuning_batch(pieces,
+                                              token2idx,
+                                              hp.BATCH_SIZE,
+                                              testing=False)
+        else:
+            x, y, mask = get_pretraining_batch(pieces,
+                                               token2idx,
+                                               hp.BATCH_SIZE,
+                                               mask_prob=0.15,
+                                               testing=False)
         # print(x[0])
         # print(y[0])
         # print(mask[0])
@@ -107,31 +125,27 @@ def generate(model,
     saver = tf.train.Saver()
     saver = tf.train.import_meta_graph(save_name + '.meta')
     saver.restore(sess, save_name)
-    x, _ = get_test_batch(pieces, 1)
-
-    time_input = np.copy(x)
-    for i in range(16, time_input.shape[1]):
-        time_input[0][i] = token2idx[hp.PAD]
+    x, y, mask = get_finetuning_batch(pieces,
+                                      token2idx,
+                                      1,
+                                      testing=True)
     # (batch_size, max_len, pitch_sz)
-    composition = np.zeros((time_input.shape[0],
-                            int(time_input.shape[1] / 4),
+    composition = np.zeros((x.shape[0],
+                            int(x.shape[1] / 4),
                             hp.NOTE_LEN, 2))
-    real_comp = np.zeros((time_input.shape[0],
-                          int(time_input.shape[1] / 4),
+    real_comp = np.zeros((x.shape[0],
+                          int(x.shape[1] / 4),
                           hp.NOTE_LEN, 2))
     previous = np.zeros((hp.NOTE_LEN, 2))
     real_previous = np.zeros((hp.NOTE_LEN, 2))
-    # pbar = tqdm(range(length))
-    # print(time_input)
-    # int(time_input.shape[1] / 4)
-    for i in range(4, int(time_input.shape[1] / 4)):
+    # (batch_size, max_len, vocab_size)
+    prediction = sess.run(model.logits,
+                          feed_dict={model.inputs: x,
+                                     model.dropout: 1.0})
+    # (batch_size, max_len)
+    activation = np.argmax(prediction, axis=2)
+    for i in range(4, int(x.shape[1] / 4)):
         for j in range(4):
-            # (batch_size, max_len, vocab_size)
-            prediction = sess.run(model.logits,
-                                  feed_dict={model.inputs: time_input,
-                                             model.dropout: 1.0})
-            # (batch_size, max_len)
-            activation = np.argmax(prediction, axis=2)
             pitch = idx2token[activation[0][i*4 + j-1]] - 24
             if pitch < hp.NOTE_LEN:
                 composition[0][i][pitch][0] = 1
@@ -140,16 +154,13 @@ def generate(model,
                 else:
                     composition[0][i][pitch][1] = 1
 
-            real_pitch = idx2token[x[0][i*4 + j]] - 24
+            real_pitch = idx2token[y[0][i*4 + j]] - 24
             if real_pitch < hp.NOTE_LEN:
                 real_comp[0][i][real_pitch][0] = 1
                 if real_previous[real_pitch][0] == 1:
                     real_comp[0][i][real_pitch][1] = 0
                 else:
                     real_comp[0][i][real_pitch][1] = 1
-
-            time_input[0][i*4 + j] = activation[0][i*4 + j-1]
-            print(time_input)
         previous = composition[0][i]
         real_previous = real_comp[0][i]
     print(composition.shape)
@@ -181,6 +192,13 @@ if __name__ == '__main__':
     #       token2idx=token2idx,
     #       epochs=500000,
     #       save_name="model/jsb8_30/model_",
-    #       load_name="model/jsb8/model_0.0013442965-210500")
-    test(m, pieces, "model/jsb8/model_0.0013442965-210500")
-    # generate(m, pieces, "model/jsb8/model", token2idx, idx2token)
+    #       load_name="model/jsb8/model_0.0013442965-210500")\
+    # train(model=m,
+    #       pieces=pieces,
+    #       token2idx=token2idx,
+    #       epochs=500000,
+    #       save_name="model/jsb8_fine/model_",
+    #       load_name="model/jsb8/model_0.0013442965-210500",
+    #       finetuning=True)
+    # test(m, pieces, "model/jsb8_fine/model_0.01460308-15000")
+    generate(m, pieces, "model/jsb8_fine/model_0.01460308-15000", token2idx, idx2token)

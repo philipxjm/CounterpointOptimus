@@ -155,42 +155,45 @@ def tokenize(pieces, token2idx, idx2token):
     return pieces
 
 
-def get_training_batch(pieces, batch_size=hp.BATCH_SIZE):
+def get_finetuning_batch(pieces,
+                         token2idx,
+                         batch_size=hp.BATCH_SIZE,
+                         testing=False):
     '''
-    For language model training.
+    For language model finetuning.
     Gets a randomized batch of batch size number of pieces from pieces.
+    Where the input has all values that's not the soprano masked.
     pieces: dictionary with keys ("train", "test", "valid"). Each value is
     a numpy array of size (pieces_num, window_size + 1)
+    token2idx: dict, translates tokens to indices.
     batch_size: int, default hp.BATCH_SIZE
+    testing: bool, default False
     Returns
     x: a numpy array of size (pieces_num, window_size)
     y: a numpy array of size (pieces_num, window_size)
+    mask: a numpy array of size (pieces_num, window_size)
     '''
-    batch_indices = np.random.choice(len(pieces["train"]),
+    if testing:
+        tr_te = "test"
+    else:
+        tr_te = "train"
+    batch_indices = np.random.choice(len(pieces[tr_te]),
                                      size=batch_size,
                                      replace=True)
-    x = pieces["train"][batch_indices][:, :-1]
-    y = pieces["train"][batch_indices][:, 1:]
-    return x.astype(int), y.astype(int)
+    x = pieces[tr_te][batch_indices][:, :-1]
+    y = np.copy(x)
+    mask = np.zeros_like(x)
 
+    for i in range(len(x)):
+        for j in range(0, len(x[i]), 4):
+            x[i][j+1] = token2idx[hp.MASK]  # alto
+            mask[i][j+1] = 1
+            x[i][j+2] = token2idx[hp.MASK]  # tenor
+            mask[i][j+2] = 1
+            x[i][j+3] = token2idx[hp.MASK]  # bass
+            mask[i][j+3] = 1
 
-def get_test_batch(pieces, batch_size=hp.BATCH_SIZE):
-    '''
-    For language model testing.
-    Gets a randomized batch of batch size number of pieces from pieces.
-    pieces: dictionary with keys ("train", "test", "valid"). Each value is
-    a numpy array of size (pieces_num, window_size + 1)
-    batch_size: int, default hp.BATCH_SIZE
-    Returns
-    x: a numpy array of size (pieces_num, window_size)
-    y: a numpy array of size (pieces_num, window_size)
-    '''
-    batch_indices = np.random.choice(len(pieces["test"]),
-                                     size=batch_size,
-                                     replace=True)
-    x = pieces["test"][batch_indices][:, :-1]
-    y = pieces["test"][batch_indices][:, 1:]
-    return x.astype(int), y.astype(int)
+    return x.astype(int), y.astype(int), mask.astype(float)
 
 
 def get_pretraining_batch(pieces,
@@ -198,6 +201,22 @@ def get_pretraining_batch(pieces,
                           batch_size=hp.BATCH_SIZE,
                           mask_prob=0.15,
                           testing=False):
+    '''
+    For language model pretraining.
+    Gets a randomized batch of batch size number of pieces from pieces.
+    Where the input has a mask_prob portion of its values masked, in a
+    80-10-10 scheme detailed in the BERT paper.
+    pieces: dictionary with keys ("train", "test", "valid"). Each value is
+    a numpy array of size (pieces_num, window_size + 1)
+    token2idx: dict, translates tokens to indices.
+    batch_size: int, default hp.BATCH_SIZE
+    mask_prob: float, default 0.15
+    testing: bool, default False
+    Returns
+    x: a numpy array of size (pieces_num, window_size)
+    y: a numpy array of size (pieces_num, window_size)
+    mask: a numpy array of size (pieces_num, window_size)
+    '''
     if testing:
         tr_te = "test"
     else:
